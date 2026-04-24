@@ -1,0 +1,77 @@
+import express from 'express';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const API_KEY = process.env.ANTHROPIC_API_KEY;
+const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
+
+// Middleware
+app.use(express.json({ limit: '1mb' }));
+app.use(express.static(join(__dirname, 'public')));
+
+// Endpoint che il frontend chiama → inoltra la richiesta ad Anthropic
+// La API key sta solo qui sul server, mai nel browser
+app.post('/api/chat', async (req, res) => {
+  if (!API_KEY) {
+    return res.status(500).json({
+      error: 'ANTHROPIC_API_KEY non configurata nelle variabili d\'ambiente di Railway'
+    });
+  }
+
+  const { message } = req.body;
+
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'Messaggio mancante o non valido' });
+  }
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 1024,
+        messages: [
+          { role: 'user', content: message }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('Anthropic API error:', errorData);
+      return res.status(response.status).json({
+        error: errorData.error?.message || `Errore API (HTTP ${response.status})`
+      });
+    }
+
+    const data = await response.json();
+    const reply = data.content?.[0]?.text || '(risposta vuota)';
+
+    res.json({ reply });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: 'Errore del server: ' + error.message });
+  }
+});
+
+// Health check (utile per Railway)
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', model: MODEL });
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server attivo su porta ${PORT}`);
+  console.log(`📡 Modello: ${MODEL}`);
+  console.log(`🔑 API Key: ${API_KEY ? '✓ configurata' : '✗ MANCANTE'}`);
+});
