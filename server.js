@@ -10,6 +10,14 @@ const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
 
+const SYSTEM_PROMPT = `Sei un assistente veloce. Rispondi sempre nel modo più breve possibile.
+
+Se l'utente ti manda un'immagine di un quiz o domanda a scelta multipla: rispondi SOLO con la lettera della risposta corretta seguita dal testo della risposta, nient'altro. Esempio: 'C. Strategic planning'. Niente spiegazioni, niente traduzioni, niente analisi dell'interfaccia, niente markdown, niente introduzioni. Solo la risposta in una riga.
+
+Se l'utente ti manda un'immagine senza contesto chiaro: descrivi in massimo 2 frasi cosa vedi.
+
+Per domande testuali: rispondi in modo conciso e diretto, senza preamboli tipo 'Certo!' o 'Ecco la risposta:'. Vai dritto al punto.`;
+
 // Middleware
 app.use(express.json({ limit: '15mb' }));
 app.use(express.static(join(__dirname, 'public')));
@@ -60,7 +68,8 @@ app.post('/api/chat', async (req, res) => {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 1024,
+        max_tokens: 512,
+        system: SYSTEM_PROMPT,
         messages: [
           { role: 'user', content }
         ]
