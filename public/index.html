@@ -508,15 +508,69 @@
         body: JSON.stringify(payload)
       });
 
-      removeThinking();
-
-      const data = await response.json();
-
       if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${response.status}`);
       }
 
-      addMessage('assistant', data.reply);
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('text/event-stream')) {
+        const data = await response.json();
+        removeThinking();
+        addMessage('assistant', data.reply || '(risposta vuota)');
+        statusEl.textContent = 'pronto';
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let msgBody = null;
+      let full = '';
+      let currentEvent = 'message';
+      let streamErr = null;
+
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (line === '') {
+            currentEvent = 'message';
+            continue;
+          }
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+            continue;
+          }
+          if (!line.startsWith('data: ')) continue;
+          const payloadLine = line.slice(6);
+          if (payloadLine === '[DONE]') break outer;
+          let parsed;
+          try { parsed = JSON.parse(payloadLine); } catch { continue; }
+          if (currentEvent === 'error') {
+            streamErr = parsed.message || 'errore stream';
+            break outer;
+          }
+          if (parsed.text) {
+            if (!msgBody) {
+              removeThinking();
+              msgBody = addMessage('assistant', '');
+            }
+            full += parsed.text;
+            msgBody.textContent = full;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        }
+      }
+
+      if (streamErr) throw new Error(streamErr);
+      if (!msgBody) {
+        removeThinking();
+        addMessage('assistant', '(risposta vuota)');
+      }
       statusEl.textContent = 'pronto';
 
     } catch (error) {

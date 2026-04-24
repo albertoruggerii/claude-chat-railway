@@ -8,7 +8,7 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
+const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5';
 
 const SYSTEM_PROMPT = `Sei un assistente veloce. Rispondi sempre nel modo più breve possibile.
 
@@ -70,6 +70,7 @@ app.post('/api/chat', async (req, res) => {
         model: MODEL,
         max_tokens: 512,
         system: SYSTEM_PROMPT,
+        stream: true,
         messages: [
           { role: 'user', content }
         ]
@@ -84,14 +85,54 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    const data = await response.json();
-    const reply = data.content?.[0]?.text || '(risposta vuota)';
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
 
-    res.json({ reply });
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (!payload || payload === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(payload);
+            if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
+              res.write(`data: ${JSON.stringify({ text: evt.delta.text })}\n\n`);
+            }
+          } catch {
+            // ignora payload non-JSON
+          }
+        }
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } catch (streamErr) {
+      console.error('Stream error:', streamErr);
+      res.write(`event: error\ndata: ${JSON.stringify({ message: streamErr.message })}\n\n`);
+      res.end();
+    }
 
   } catch (error) {
     console.error('Server error:', error);
-    res.status(500).json({ error: 'Errore del server: ' + error.message });
+    if (res.headersSent) {
+      res.write(`event: error\ndata: ${JSON.stringify({ message: error.message })}\n\n`);
+      res.end();
+    } else {
+      res.status(500).json({ error: 'Errore del server: ' + error.message });
+    }
   }
 });
 
