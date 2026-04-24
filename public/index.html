@@ -181,6 +181,73 @@
     30% { opacity: 1; transform: scale(1.2); }
   }
 
+  #image-preview {
+    display: none;
+    margin-top: 1rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--assist-bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  #image-preview.visible {
+    display: flex;
+  }
+
+  #image-preview img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  #image-preview .info {
+    flex: 1;
+    min-width: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--muted);
+    line-height: 1.4;
+    overflow: hidden;
+  }
+
+  #image-preview .info .name {
+    color: var(--ink);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #image-preview .remove {
+    background: none;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    padding: 0.35rem 0.7rem;
+    height: auto;
+    font-size: 0.7rem;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  #image-preview .remove:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: none;
+  }
+
+  .msg-image {
+    display: block;
+    max-width: 100%;
+    max-height: 300px;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+  }
+
   form {
     border-top: 1px solid var(--line);
     padding: 1.25rem 0 0;
@@ -262,17 +329,26 @@
   <div id="messages">
     <div class="welcome">
       <h1>dimmi <em>qualcosa</em></h1>
-      <p>Interfaccia diretta all'API di Claude. Scrivi sotto e premi invio.</p>
+      <p>Interfaccia diretta all'API di Claude. Scrivi sotto e premi invio, oppure incolla un'immagine con cmd+v.</p>
     </div>
   </div>
 
+  <div id="image-preview">
+    <img id="preview-thumb" alt="anteprima">
+    <div class="info">
+      <div class="name" id="preview-name"></div>
+      <div><span id="preview-size"></span> · <span id="preview-type"></span></div>
+    </div>
+    <button type="button" class="remove" id="preview-remove">rimuovi</button>
+  </div>
+
   <form id="chat-form">
-    <textarea id="input" placeholder="scrivi qui..." rows="1" autofocus></textarea>
+    <textarea id="input" placeholder="scrivi qui... (cmd+v per incollare un'immagine)" rows="1" autofocus></textarea>
     <button type="submit" id="send">invia</button>
   </form>
 </main>
 
-<footer>invio = manda · shift+invio = a capo</footer>
+<footer>invio = manda · shift+invio = a capo · cmd+v = incolla immagine</footer>
 
 <script>
   const messagesEl = document.getElementById('messages');
@@ -281,6 +357,57 @@
   const sendBtn = document.getElementById('send');
   const statusEl = document.getElementById('status');
   const welcomeEl = document.querySelector('.welcome');
+  const previewEl = document.getElementById('image-preview');
+  const previewThumb = document.getElementById('preview-thumb');
+  const previewName = document.getElementById('preview-name');
+  const previewSize = document.getElementById('preview-size');
+  const previewType = document.getElementById('preview-type');
+  const previewRemove = document.getElementById('preview-remove');
+
+  let currentImage = null;
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  function clearImage() {
+    currentImage = null;
+    previewEl.classList.remove('visible');
+    previewThumb.src = '';
+    previewName.textContent = '';
+    previewSize.textContent = '';
+    previewType.textContent = '';
+  }
+
+  function showImage(file, dataUrl) {
+    const base64 = dataUrl.split(',')[1];
+    currentImage = { data: base64, mediaType: file.type, dataUrl };
+    previewThumb.src = dataUrl;
+    previewName.textContent = file.name || 'immagine.png';
+    previewSize.textContent = formatSize(file.size);
+    previewType.textContent = file.type;
+    previewEl.classList.add('visible');
+  }
+
+  previewRemove.addEventListener('click', clearImage);
+
+  document.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (!file) continue;
+        e.preventDefault();
+        const reader = new FileReader();
+        reader.onload = () => showImage(file, reader.result);
+        reader.readAsDataURL(file);
+        return;
+      }
+    }
+  });
 
   // Auto-resize della textarea
   input.addEventListener('input', () => {
@@ -296,7 +423,7 @@
     }
   });
 
-  function addMessage(role, content) {
+  function addMessage(role, content, imageDataUrl) {
     const welcome = document.querySelector('.welcome');
     if (welcome) welcome.remove();
 
@@ -307,11 +434,20 @@
     label.className = 'msg-label';
     label.textContent = role === 'user' ? 'tu' : role === 'assistant' ? 'claude' : 'errore';
 
+    div.appendChild(label);
+
+    if (imageDataUrl) {
+      const img = document.createElement('img');
+      img.className = 'msg-image';
+      img.src = imageDataUrl;
+      img.alt = 'immagine allegata';
+      div.appendChild(img);
+    }
+
     const body = document.createElement('div');
     body.className = 'msg-content';
     body.textContent = content;
 
-    div.appendChild(label);
     div.appendChild(body);
     messagesEl.appendChild(div);
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -349,21 +485,27 @@
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const userText = input.value.trim();
-    if (!userText) return;
+    if (!userText && !currentImage) return;
 
-    addMessage('user', userText);
+    const imageToSend = currentImage;
+    addMessage('user', userText, imageToSend ? imageToSend.dataUrl : null);
     input.value = '';
     input.style.height = 'auto';
+    clearImage();
     sendBtn.disabled = true;
     statusEl.textContent = 'in elaborazione...';
     addThinking();
 
     try {
       // Chiama il backend su Railway (stesso dominio), NON direttamente Anthropic
+      const payload = { message: userText };
+      if (imageToSend) {
+        payload.image = { data: imageToSend.data, mediaType: imageToSend.mediaType };
+      }
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userText })
+        body: JSON.stringify(payload)
       });
 
       removeThinking();

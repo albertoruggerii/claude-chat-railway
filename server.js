@@ -11,7 +11,7 @@ const API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
 
 // Middleware
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '15mb' }));
 app.use(express.static(join(__dirname, 'public')));
 
 // Endpoint che il frontend chiama → inoltra la richiesta ad Anthropic
@@ -23,10 +23,31 @@ app.post('/api/chat', async (req, res) => {
     });
   }
 
-  const { message } = req.body;
+  const { message, image } = req.body;
 
-  if (!message || typeof message !== 'string') {
-    return res.status(400).json({ error: 'Messaggio mancante o non valido' });
+  const hasText = typeof message === 'string' && message.trim().length > 0;
+  const hasImage = image && typeof image.data === 'string' && typeof image.mediaType === 'string';
+
+  if (!hasText && !hasImage) {
+    return res.status(400).json({ error: 'Serve almeno un messaggio o un\'immagine' });
+  }
+
+  let content;
+  if (hasImage) {
+    const textBlock = hasText ? message : 'Cosa vedi in questa immagine?';
+    content = [
+      {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: image.mediaType,
+          data: image.data
+        }
+      },
+      { type: 'text', text: textBlock }
+    ];
+  } else {
+    content = message;
   }
 
   try {
@@ -41,7 +62,7 @@ app.post('/api/chat', async (req, res) => {
         model: MODEL,
         max_tokens: 1024,
         messages: [
-          { role: 'user', content: message }
+          { role: 'user', content }
         ]
       })
     });
